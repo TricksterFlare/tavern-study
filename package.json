@@ -1,0 +1,21 @@
+{
+  "name": "tavern-study",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test tests/*.test.ts",
+    "build": "node scripts/run-wrangler.mjs deploy --dry-run --outdir dist",
+    "release:check": "npm run typecheck && npm test && npm run build && node scripts/release-hygiene.mjs",
+    "db:init:local": "wrangler d1 execute tavern-study --local --file examples/cloudflare/schema/init.sql",
+    "db:migrate:local": "wrangler d1 migrations apply tavern-study --local"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260731.1",
+    "typescript": "^5.8.3",
+    "wrangler": "^4.26.1"
+  }
+}

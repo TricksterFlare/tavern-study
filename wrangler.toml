@@ -1,0 +1,39 @@
+name = "tavern-study"
+main = "examples/cloudflare/index.ts"
+compatibility_date = "2026-07-01"
+
+[[d1_databases]]
+binding = "OC_DB"
+database_name = "tavern-study"
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+migrations_dir = "examples/cloudflare/schema/migrations"
+
+# Optional: semantic search for study/shelf entries and chapter recall. Everything degrades
+# gracefully without it (StudyService reports capability:'disabled'; desk assembly's "past
+# chapters" section simply stays empty) — bind these only if you want semantic search on.
+[[vectorize]]
+binding = "OC_VECTORIZE"
+index_name = "REPLACE_WITH_YOUR_VECTORIZE_INDEX"
+
+[ai]
+binding = "AI"
+
+[vars]
+ALLOWED_ORIGINS = "http://localhost:8787"
+COMPANION_COMMENT_WRITE = "false"
+
+# ANTHROPIC_API_KEY is a secret, not a var — set it with `wrangler secret put ANTHROPIC_API_KEY`.
+# Desk chat, board-refresh, and timeline fold all degrade to a clean "not configured" error
+# without it; nothing else in this repo requires it.
+
+# Optional: ANTHROPIC_BASE_URL (a plain var, fine to put under [vars]) points all three
+# generation chains (desk chat / board refresh / timeline fold) at an Anthropic-compatible
+# gateway instead of api.anthropic.com. It is the FULL Messages endpoint URL, e.g.
+#   ANTHROPIC_BASE_URL = "https://your-gateway.example.com/v1/messages"
+# https-only, credentials embedded in the URL are rejected, and the wire protocol stays
+# Anthropic Messages — whether your gateway speaks it faithfully is the gateway's business.
+
+# AUTH_TOKEN is also a secret (`wrangler secret put AUTH_TOKEN`) — it gates the writer's-desk
+# admin surface only, as the first URL path segment: /{AUTH_TOKEN}/api/oc/... . It is separate
+# from OWNER_TOKEN/COMPANION_TOKEN above, which gate the Bearer-authenticated MCP and
+# published-reading routes.

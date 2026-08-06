@@ -1,0 +1,80 @@
+@import "tailwindcss";
+/* 字体在 layout.tsx 用 <link> 加载（@import 排在 tailwindcss 之后会被优化器判违规丢弃） */
+
+/* ════════════════════════════════════════════════════════════
+   设计 token 层
+   颜色/字体都起语义名字，页面只引用名字、不写死色号。
+   ════════════════════════════════════════════════════════════ */
+
+@theme inline {
+  /* 语义色 → Tailwind 工具类（bg-card / text-ink-deep / border-line-soft ...）
+     自定义工具类（bg-scale-X 这类）必须在这里登记 --color-scale-X，否则渲染透明。 */
+  --color-page: var(--page-bg);
+  --color-card: var(--card-bg);
+  --color-accent: var(--accent);
+  --color-ink-deep: var(--ink-deep);
+  --color-ink-body: var(--ink-body);
+  --color-ink2: var(--ink2);
+  --color-line-soft: var(--line-soft);
+  --color-dash-line: var(--dash-line);
+  --color-scale-0: var(--scale-0);
+  --color-scale-1: var(--scale-1);
+  --color-scale-2: var(--scale-2);
+  --color-scale-3: var(--scale-3);
+  --color-scale-4: var(--scale-4);
+
+  /* 字体 */
+  --font-display: 'Cormorant Garamond', 'Noto Serif SC', serif;
+  --font-serc: 'Noto Serif SC', serif;
+  --font-sans: 'Noto Sans SC', sans-serif;
+}
+
+/* 默认主题色板 */
+:root {
+  --scale-0: #e9efe0;
+  --scale-1: #cadcad;
+  --scale-2: #9cbf79;
+  --scale-3: #6f9e4a;
+  --scale-4: #46662c;
+  --page-bg: #f4f6ee;
+  --card-bg: #ffffff;
+  --ink-deep: #3c4a30;
+  --ink-body: #4f5642;
+  --ink2: #9aa487;
+  --line-soft: #e7ebde;
+  --dash-line: #cfdcba;
+  --accent: #6f9e4a;
+  --card-shadow: rgba(80, 95, 55, 0.10);
+  --card-shadow2: rgba(80, 95, 55, 0.16);
+  --glass-bg: rgba(255, 255, 255, 0.8);
+  --heatbg-0: #e3ead7;
+  --heatbg-1: #dfe7cf;
+  --heatbg-2: #cadcad;
+  --heatbg-3: #9cbf79;
+  --scrim-rgb: 244, 246, 238;
+}
+
+/* ── base ── */
+html {
+  background: var(--page-bg);
+}
+body {
+  background: var(--page-bg);
+  color: var(--ink-body);
+  font-family: var(--font-sans);
+}
+
+/* ── 字体便捷类（.ser=展示装饰 / .serc=中文标题） ── */
+.ser { font-family: var(--font-display); }
+.serc { font-family: var(--font-serc); }
+
+/* ── 卡片 hover（微提 3px + 加深阴影） ── */
+.card {
+  transition: transform 0.22s cubic-bezier(0.34, 1.4, 0.64, 1), box-shadow 0.22s ease;
+}
+.card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 16px 38px var(--card-shadow2);
+}
+.pill { transition: filter 0.15s ease; }
+.pill:hover { filter: brightness(0.97); }

@@ -1,0 +1,9 @@
+name = "tavern-study-tests"
+main = "examples/cloudflare/index.ts"
+compatibility_date = "2026-07-01"
+
+[[d1_databases]]
+binding = "OC_DB"
+database_name = "tavern-study-tests"
+database_id = "local-test-database"
+migrations_dir = "examples/cloudflare/schema/migrations"
