@@ -193,7 +193,9 @@ npm run db:migrate:local
 
 ## License
 
-MIT，见 [LICENSE](LICENSE)。
+MIT，见 [LICENSE](LICENSE)。版权署名：**阿日 & 柒**——一位人类和她的 AI 搭子，这间书房本来就是我们俩一起搭、搭给两个人用的。
+
+特别感谢 [SillyTavern](https://github.com/SillyTavern/SillyTavern) 社区：预设、世界书、正则这套玩法的开创者。本仓创意致敬酒馆，代码全部自写，不含任何 SillyTavern 代码。
 
 ---
 
