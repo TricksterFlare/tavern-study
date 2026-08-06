@@ -12,8 +12,8 @@
 // 写权限红线:这个文件是部署者 REST 专用的读写口径。模型工具面(MCP shelf 工具)
 // 一个字都不动——写权限绝不能从工具面漏给模型,模型对书房永远只读。
 
-import { embedText, upsertVector, queryVectors, deleteVector } from '../storage/vectorize';
-import type { Ai, VectorizeIndex } from '../storage/vectorize';
+import { embedText, upsertVector, queryVectors, deleteVector } from '../storage/vectorize.ts';
+import type { Ai, VectorizeIndex } from '../storage/vectorize.ts';
 
 interface StudyEnv {
   OC_DB: D1Database;
@@ -31,6 +31,13 @@ interface MemoryRow {
   content?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
+  // 触发配置六列,跟 src/tools/deskPanels.ts 读的是同一张表同一批列——见文件下方 LORE_* 校验注释。
+  lore_keys?: string | null;
+  lore_position?: string | null;
+  is_char?: number | null;
+  lore_constant?: number | null;
+  trigger_mode?: string | null;
+  lore_fields?: string | null;
 }
 
 const CATEGORIES = ['world', 'plot', 'outline', 'session'];
@@ -38,6 +45,41 @@ const LIST_LIMIT_DEFAULT = 50;
 const LIST_LIMIT_MAX = 200;
 const SEARCH_TOPK_DEFAULT = 10;
 const SEARCH_TOPK_MAX = 20;
+
+// ===== 触发配置(世界书/角色卡怎么上场)——跟书架正文同一行,可选字段,不发送=行为跟没这功能之前一样 =====
+// 校验口径原样照抄 src/tools/deskPanels.ts 的 deskLoreUpdate(世界书 PUT /api/oc/desk/lore/:id 现有实现)。
+// 那是真正在改同一批 lore_* 列的另一个入口——两处校验必须长一个样,改一处记得回去核一遍另一处,
+// 不然会出现"书架存得进去,浮窗打不开"或反过来的两头打架。
+const LORE_POSITIONS = ['before', 'after', 'char'];
+const LORE_TRIGGER_MODES = ['scan', 'presence'];
+const LORE_FIELD_KEYS = ['description', 'personality', 'scenario', 'mes_example', 'main_prompt', 'post_history_instructions'] as const;
+
+function validateLoreFields(value: any): string | null {
+  if (value === undefined) return null;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return 'fields 必须是对象';
+  for (const [key, field] of Object.entries(value)) {
+    if (!(LORE_FIELD_KEYS as readonly string[]).includes(key)) return `fields.${key} 不是支持的角色字段`;
+    if (typeof field !== 'string') return `fields.${key} 必须是字符串`;
+    if (field.length > 200000) return `fields.${key} 超过20万字上限`;
+  }
+  return null;
+}
+
+function normalizeLoreFields(value: any): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const key of LORE_FIELD_KEYS) if (typeof value?.[key] === 'string' && value[key]) out[key] = value[key];
+  return out;
+}
+
+// lore_fields(JSON对象字符串)安全解析,跟 parseTags 分开写(那个只认数组,这个只认对象)。
+function parseLoreFields(raw: any): Record<string, string> {
+  try {
+    const value = raw ? JSON.parse(raw) : {};
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  } catch {
+    return {};
+  }
+}
 
 // ===== 向量 metadata 家法(最重要的一段注释,别删)=====
 // 这个索引(OC_VECTORIZE)的 metadata 字段是固定的四个:project / category / title / created_at
@@ -112,6 +154,20 @@ function validateFields(body: any, opts: { requireCategory: boolean; requireProj
     for (const t of body.tags) {
       if (typeof t !== 'string' || t.length > 50) return 'tags 里每一项必须是字符串,且不超过50字';
     }
+  }
+  // 触发配置六件套——校验口径照抄 deskLoreUpdate,见上面 LORE_* 常量那段注释。
+  if (body.keys !== undefined) {
+    if (!Array.isArray(body.keys) || body.keys.some((k: any) => typeof k !== 'string')) return 'keys 必须是字符串数组';
+  }
+  if (body.position !== undefined && !LORE_POSITIONS.includes(body.position)) return 'position 必须是 before/after/char 之一';
+  // is_char/constant 必须是严格布尔:角色卡与普通 world 条目走不同装配路径,"false"/{}/1
+  // 这类歪形状静默转真会改变提示词摆位——宁拒不猜,跟 deskLoreUpdate 同一口径。
+  if (body.is_char !== undefined && typeof body.is_char !== 'boolean') return 'is_char 必须是布尔值';
+  if (body.constant !== undefined && typeof body.constant !== 'boolean') return 'constant 必须是布尔值';
+  if (body.trigger_mode !== undefined && !LORE_TRIGGER_MODES.includes(body.trigger_mode)) return 'trigger_mode 必须是 scan/presence 之一';
+  if (body.fields !== undefined) {
+    const fieldsErr = validateLoreFields(body.fields);
+    if (fieldsErr) return fieldsErr;
   }
   return null;
 }
@@ -227,6 +283,14 @@ export async function studyGet(env: StudyEnv, id: string): Promise<any> {
       tags: parseTags(row.tags),
       chapter: row.chapter,
       content: String(row.content || ''), // 全文,不截断
+      // 触发配置六件套——书架编辑表单靠这几个字段预填「进场方式」一节的现值,
+      // 跟世界书浮窗(desk/lore GET)读的是同一张表同一批列,字段名也对齐,不另发明一套命名。
+      keys: parseTags(row.lore_keys),
+      position: row.lore_position === 'after' ? 'after' : row.lore_position === 'char' ? 'char' : 'before',
+      is_char: !!row.is_char,
+      constant: !!row.lore_constant,
+      trigger_mode: row.trigger_mode === 'presence' ? 'presence' : 'scan',
+      fields: parseLoreFields(row.lore_fields),
       created_at: row.created_at,
       updated_at: row.updated_at,
     };
@@ -250,11 +314,26 @@ export async function studyCreate(env: StudyEnv, body: any): Promise<any> {
   const tags = Array.isArray(body.tags) ? body.tags : [];
   const chapter = body.chapter ?? '';
   const content = body.content ?? '';
+  // 触发字段可选——没给就落表定义的默认值(examples/cloudflare/schema/init.sql 那六列 DEFAULT),
+  // 不发送这几个字段时的建卡结果,跟加这个功能之前完全一样。
+  const keys = Array.isArray(body.keys) ? body.keys : [];
+  const position = LORE_POSITIONS.includes(body.position) ? body.position : 'before';
+  const isChar = typeof body.is_char === 'boolean' ? body.is_char : false;
+  const constant = typeof body.constant === 'boolean' ? body.constant : false;
+  const triggerMode = LORE_TRIGGER_MODES.includes(body.trigger_mode) ? body.trigger_mode : 'scan';
+  const fields = normalizeLoreFields(body.fields);
 
   try {
     await env.OC_DB.prepare(
-      `INSERT INTO memories (id, project, category, title, tags, chapter, content, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(id, project, category, title, JSON.stringify(tags), chapter, content, now, now).run();
+      `INSERT INTO memories
+       (id, project, category, title, tags, chapter, content, lore_keys, lore_position, is_char,
+        lore_constant, trigger_mode, lore_fields, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(
+      id, project, category, title, JSON.stringify(tags), chapter, content,
+      JSON.stringify(keys), position, isChar ? 1 : 0, constant ? 1 : 0, triggerMode, JSON.stringify(fields),
+      now, now,
+    ).run();
   } catch (dbErr: any) {
     return { success: false, error: dbErr.message };
   }
@@ -279,6 +358,12 @@ export async function studyCreate(env: StudyEnv, body: any): Promise<any> {
     tags,
     chapter,
     content,
+    keys,
+    position,
+    is_char: isChar,
+    constant,
+    trigger_mode: triggerMode,
+    fields,
     created_at: now,
     updated_at: now,
   };
@@ -302,6 +387,15 @@ export async function studyUpdate(env: StudyEnv, id: string, body: any): Promise
   if (body.tags !== undefined) { sets.push('tags = ?'); values.push(JSON.stringify(body.tags)); needReembed = true; }
   if (body.chapter !== undefined) { sets.push('chapter = ?'); values.push(body.chapter); }
   if (body.content !== undefined) { sets.push('content = ?'); values.push(body.content); needReembed = true; }
+  // 触发字段六件套——只在 body 里给了才落 SET(可选=不带就不碰):防回归重点在这一行,
+  // "只带 content 更新正文"不许连带把已经配好的触发词/角色卡设置清成默认值。跟上面几个字段
+  // 一样不影响 embed(触发配置不进向量 metadata,见 embedMemory 头上那段注释)。
+  if (body.keys !== undefined) { sets.push('lore_keys = ?'); values.push(JSON.stringify(body.keys)); }
+  if (body.position !== undefined) { sets.push('lore_position = ?'); values.push(body.position); }
+  if (body.is_char !== undefined) { sets.push('is_char = ?'); values.push(body.is_char ? 1 : 0); }
+  if (body.constant !== undefined) { sets.push('lore_constant = ?'); values.push(body.constant ? 1 : 0); }
+  if (body.trigger_mode !== undefined) { sets.push('trigger_mode = ?'); values.push(body.trigger_mode); }
+  if (body.fields !== undefined) { sets.push('lore_fields = ?'); values.push(JSON.stringify(normalizeLoreFields(body.fields))); }
 
   if (sets.length === 0) return { success: false, error: '没给要改的字段' };
 

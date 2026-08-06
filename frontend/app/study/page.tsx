@@ -8,6 +8,10 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import HeatBg from '../HeatBg';
 import ReadingCorner from './ReadingCorner';
 import TypingDesk, { type TypingDeskHandle } from './TypingDesk';
+import {
+  LoreTriggerFields, DEFAULT_LORE_TRIGGER, triggerKeysFromText, triggerModeForSave,
+  type LoreTriggerValue, type LorePosition, type CharacterFields,
+} from './LoreTriggerFields';
 
 // ── 数据形状(按后端契约来,字段名不许自己发明) ──
 type Stats = { by_category: Record<string, number>; by_project: Record<string, number>; total: number };
@@ -15,10 +19,15 @@ type MemoryListItem = {
   id: string; project: string; category: string; title: string;
   chapter?: string | null; tags: string[]; created_at: string; preview: string;
 };
+// 触发配置六件套(keys/position/is_char/constant/trigger_mode/fields)跟世界书浮窗
+// (DeskDrawers.tsx LoreRowView)读写同一份 memories 行——只对 world/outline 分类有意义,
+// plot/session 恒是库默认值,书架表单不管它们。
 type MemoryDetail = {
   id: string; project: string; category: string; title: string;
   chapter?: string | null; tags: string[]; content: string;
   created_at: string; updated_at: string;
+  keys: string[]; position: LorePosition; is_char: boolean; constant: boolean;
+  trigger_mode: 'scan' | 'presence'; fields: CharacterFields;
 };
 type SearchResult = {
   id: string; project: string; category: string; title: string;
@@ -55,6 +64,11 @@ function restoredCategory(params: URLSearchParams): string {
 // 通用新增/编辑表单可选的分类:「剧情总结」已经改吃章节架(oc_chapters,见 ChaptersStudio),
 // 从这里摘掉——挡住"绕开章节架从别的分类切进 plot 继续写 memories"的后门。
 const FORM_CATEGORIES = CATEGORIES.filter((c) => c.key !== 'plot');
+// 世界书闸门:只有 world(设定)/outline(大纲)两类会被打字桌世界书面板扫到,
+// 表单的「进场方式」一节只在这两类下显示——跟 src/tools/deskPanels.ts 的 LORE_CATEGORIES 同宽。
+function isLoreCategory(category: string): boolean {
+  return category === 'world' || category === 'outline';
+}
 
 // ── 卡片风格小料(颜色只用 token) ──
 const cardStyle: React.CSSProperties = {
@@ -245,7 +259,7 @@ export default function StudyPage() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState('');
   const [detail, setDetail] = useState<MemoryDetail | null>(null);
-  const [form, setForm] = useState({ project: '', category: 'world', title: '', chapter: '', tagsText: '', content: '' });
+  const [form, setForm] = useState({ project: '', category: 'world', title: '', chapter: '', tagsText: '', content: '', trigger: DEFAULT_LORE_TRIGGER });
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
   const [lastVectorOk, setLastVectorOk] = useState<boolean | null>(null);
@@ -347,6 +361,12 @@ export default function StudyPage() {
         id: d.id, project: d.project, category: d.category, title: d.title,
         chapter: d.chapter ?? null, tags: Array.isArray(d.tags) ? d.tags : [],
         content: d.content ?? '', created_at: d.created_at, updated_at: d.updated_at,
+        // 触发字段六件套:接口没带(旧缓存的 Worker 版本)就落回库默认,回显不炸。
+        keys: Array.isArray(d.keys) ? d.keys : [],
+        position: d.position === 'after' || d.position === 'char' ? d.position : 'before',
+        is_char: !!d.is_char, constant: !!d.constant,
+        trigger_mode: d.trigger_mode === 'presence' ? 'presence' : 'scan',
+        fields: d.fields && typeof d.fields === 'object' ? d.fields : {},
       });
       return true;
     } catch (e: any) {
@@ -527,7 +547,7 @@ export default function StudyPage() {
     setDetail(null);
     setLastVectorOk(null);
     setSaveError('');
-    setForm({ project: currentProject || '', category: currentCategory === 'all' ? 'world' : currentCategory, title: '', chapter: '', tagsText: '', content: '' });
+    setForm({ project: currentProject || '', category: currentCategory === 'all' ? 'world' : currentCategory, title: '', chapter: '', tagsText: '', content: '', trigger: DEFAULT_LORE_TRIGGER });
     navigate('detail');
   }
   function startEdit() {
@@ -535,6 +555,12 @@ export default function StudyPage() {
     setForm({
       project: detail.project, category: detail.category, title: detail.title,
       chapter: detail.chapter || '', tagsText: (detail.tags || []).join(', '), content: detail.content || '',
+      // 预填现值:跟世界书浮窗读写同一份数据,编辑表单打开时得看见浮窗那边可能已经改过的触发配置。
+      trigger: {
+        keysText: (detail.keys || []).join('、'), position: detail.position,
+        isChar: detail.is_char, constant: detail.constant,
+        presenceOnly: detail.trigger_mode === 'presence', fields: detail.fields || {},
+      },
     });
     setSaveError('');
     setDetailMode('edit');
@@ -554,7 +580,17 @@ export default function StudyPage() {
       if (!project || !title) throw new Error('项目和标题不能空着');
       // 中英文逗号都认(中文输入法打逗号常不切回英文,兼容两种输入习惯)
       const tags = form.tagsText.split(/[,，]/).map((s) => s.trim()).filter(Boolean);
-      const body = { project, category: form.category, title, chapter: form.chapter.trim(), tags, content: form.content };
+      const body: any = { project, category: form.category, title, chapter: form.chapter.trim(), tags, content: form.content };
+      // 触发字段只在 world/outline 才带上——其它分类不显示这一节 UI,也不该发这几个字段
+      // (可选=向后兼容:不发送时后端行为跟没加这个功能之前完全一样)。
+      if (isLoreCategory(form.category)) {
+        body.keys = triggerKeysFromText(form.trigger.keysText);
+        body.position = form.trigger.position;
+        body.is_char = form.trigger.isChar;
+        body.constant = form.trigger.constant;
+        body.trigger_mode = triggerModeForSave(form.trigger.isChar, form.trigger.presenceOnly);
+        body.fields = form.trigger.fields;
+      }
       const url = detailMode === 'new' ? `${base}/api/oc/memories` : `${base}/api/oc/memories/${detailId}`;
       const method = detailMode === 'new' ? 'POST' : 'PUT';
       const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -1061,6 +1097,14 @@ function EditForm({ form, setForm, projectOptions }: { form: any; setForm: (f: a
         <div style={{ fontSize: 12, color: 'var(--ink2)', marginBottom: 5 }}>标签(逗号分隔)</div>
         <input value={form.tagsText} onChange={(e) => setForm({ ...form, tagsText: e.target.value })} placeholder="比如: 主角, 时间线, 关键道具" style={inputStyle} />
       </div>
+      {isLoreCategory(form.category) && (
+        <div>
+          <div style={{ fontSize: 12, color: 'var(--ink2)', marginBottom: 5 }}>
+            进场方式<span style={{ marginLeft: 6, opacity: 0.8, fontSize: 11 }}>这本书什么时候被塞进剧本——跟打字桌·世界书面板是同一份配置</span>
+          </div>
+          <LoreTriggerFields value={form.trigger} onChange={(patch) => setForm({ ...form, trigger: { ...form.trigger, ...patch } })} />
+        </div>
+      )}
       <div>
         <div style={{ fontSize: 12, color: 'var(--ink2)', marginBottom: 5 }}>正文</div>
         <textarea

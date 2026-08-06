@@ -13,6 +13,11 @@
 // 设定/大纲的那一行,正文与触发配置同住一行。旧的 desk_lore 指针表已经 DROP 掉。
 
 import { useState, useEffect, useRef, useCallback, forwardRef, useImperativeHandle } from 'react';
+import {
+  LoreTriggerFields, triggerKeysFromText, triggerModeForSave,
+  inputStyle, btnGhostStyle, fieldLabelStyle,
+  type CharacterFields, type LoreTriggerValue,
+} from './LoreTriggerFields';
 
 // ── 数据形状(照后端 tools/deskPanels.ts / tools/desk.ts / tools/deskRecipes.ts / tools/study.ts 的真实返回来)──
 type Weight = 'light' | 'heavy';
@@ -28,10 +33,8 @@ type Recipe = {
   regex_ids: string[]; params: any; light_system: string;
   created_at: string; updated_at?: string;
 };
-type CharacterFields = {
-  description?: string; personality?: string; scenario?: string; mes_example?: string;
-  main_prompt?: string; post_history_instructions?: string;
-};
+// CharacterFields 挪去 LoreTriggerFields.tsx(触发配置共用组件那份)了,这里 import 回来用——
+// 世界书浮窗跟书架表单现在共用同一份"酒馆高级字段"形状,不留第二份声明。
 const STANDARD_SLOT_HINTS: Record<string, string> = {
   worldInfoBefore: '装入命中的前置世界书',
   personaDescription: '装入当前 Persona 描述',
@@ -65,29 +68,19 @@ type RegexRow = {
 type CoreBlock = { title: string; text: string };
 
 // ── Sage 风格小料(照 TypingDesk.tsx 同款抄一份,每文件各自小份复制是本仓一贯风格)──
+// inputStyle/btnGhostStyle/fieldLabelStyle 挪去 LoreTriggerFields.tsx 了(上面已 import 回来)——
+// 触发配置那块 UI 搬出去之后,这三个不能留两份,改样式只许改那一处。
 const cardStyle: React.CSSProperties = {
   background: 'var(--card-bg)', border: '1px solid var(--line-soft)', borderRadius: 16, boxShadow: '0 4px 12px var(--card-shadow)',
-};
-const inputStyle: React.CSSProperties = {
-  fontSize: 13, color: 'var(--ink-body)', background: 'var(--card-bg)', border: '1px solid var(--line-soft)',
-  borderRadius: 10, padding: '8px 12px', fontFamily: 'inherit', outline: 'none', width: '100%', boxSizing: 'border-box',
 };
 const btnPrimaryStyle: React.CSSProperties = {
   fontSize: 12.5, color: '#fff', background: 'var(--accent)', border: 'none',
   padding: '8px 16px', borderRadius: 12, cursor: 'pointer', fontFamily: 'inherit',
 };
-const btnGhostStyle: React.CSSProperties = {
-  fontSize: 12, color: 'var(--ink-body)', background: 'var(--card-bg)', border: '1px dashed var(--dash-line)',
-  padding: '7px 14px', borderRadius: 12, cursor: 'pointer', fontFamily: 'inherit',
-};
 const errColor = '#c2693f';
 const badgeStyle: React.CSSProperties = {
   fontSize: 10.5, padding: '2px 8px', borderRadius: 20, background: 'var(--scale-0)', color: 'var(--ink2)', whiteSpace: 'nowrap',
 };
-// 字段标题:世界书这几个编辑框原来全靠 placeholder 说自己是谁——一填字提示就消失,回头再看
-// 就是一排没名字的框,跟书架编辑器长得还像,容易把"触发关键词"误认成书架的「标签」。占位提示
-// 留着当例子,标题才是那个不会消失的名牌。
-const fieldLabelStyle: React.CSSProperties = { fontSize: 11, color: 'var(--ink2)', marginBottom: 4 };
 
 function Toggle({ checked, onChange, disabled }: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
   return (
@@ -1185,6 +1178,15 @@ export function LoreTab({ base, envOk, project, onDirtyChange }: {
   );
 }
 
+// LoreRow → LoreTriggerFields 受控值的摊平——展开"编辑"或取消编辑重新摊平草稿时共用同一份映射,
+// 别在两处各写一遍字段搬运容易漏字段。
+function rowToTriggerValue(row: LoreRow): LoreTriggerValue {
+  return {
+    keysText: row.keys.join('、'), position: row.position, isChar: row.is_char,
+    constant: row.constant, presenceOnly: row.trigger_mode === 'presence', fields: row.fields || {},
+  };
+}
+
 function LoreRowView({ row, base, first, busy, onToggle, onSaved, onEditingChange }: {
   row: LoreRow; base: string; first: boolean; busy: boolean; onToggle: () => void;
   onSaved: (patch: Partial<LoreRow>) => void;
@@ -1192,14 +1194,10 @@ function LoreRowView({ row, base, first, busy, onToggle, onSaved, onEditingChang
 }) {
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
-  const [keysDraft, setKeysDraft] = useState(row.keys.join('、'));
   const [contentDraft, setContentDraft] = useState(row.content);
-  const [positionDraft, setPositionDraft] = useState(row.position);
-  const [isCharDraft, setIsCharDraft] = useState(row.is_char);
-  const [constantDraft, setConstantDraft] = useState(row.constant);
-  const [presenceOnlyDraft, setPresenceOnlyDraft] = useState(row.trigger_mode === 'presence');
-  const [fieldsDraft, setFieldsDraft] = useState<CharacterFields>(row.fields || {});
-  const [showAdvanced, setShowAdvanced] = useState(false);
+  // 触发配置那一撮字段(关键词/装在哪儿/是不是角色卡/常驻/只认在场/酒馆高级字段)搬去共用组件
+  // LoreTriggerFields 了,这里只留一个受控值 + onChange 补丁合并,不再各开一个 useState。
+  const [triggerDraft, setTriggerDraft] = useState<LoreTriggerValue>(() => rowToTriggerValue(row));
   const [saving, setSaving] = useState(false);
   const [saveErr, setSaveErr] = useState('');
 
@@ -1218,18 +1216,18 @@ function LoreRowView({ row, base, first, busy, onToggle, onSaved, onEditingChang
   async function save() {
     if (saving) return;
     setSaving(true); setSaveErr('');
-    const keys = keysDraft.split(/[、,，]/).map((s) => s.trim()).filter(Boolean);
-    // trigger_mode 只对角色卡有意义:取消勾"是角色卡"时一并落回 scan,免得留下一张"非角色卡却
-    // 标着只认在场名单"的行——那一列对普通世界书条目根本不看,存着只会误导下一个读库的人。
-    const triggerMode: 'scan' | 'presence' = isCharDraft && presenceOnlyDraft ? 'presence' : 'scan';
+    const keys = triggerKeysFromText(triggerDraft.keysText);
+    // trigger_mode 落库口径统一在 LoreTriggerFields.tsx 的 triggerModeForSave——书架表单那边的
+    // 保存路径共用同一个 helper,两处不会有一处忘记"非角色卡落回 scan"这条规则。
+    const triggerMode = triggerModeForSave(triggerDraft.isChar, triggerDraft.presenceOnly);
     // 第二批:content 一起提交。以前这行只是指针、正文在书架,所以 PUT 拒绝碰 content;
     // 现在这行就是书架那一行,改正文和改触发词落的是同一条记录,没有第二份可以写歪。
-    const body: any = { keys, content: contentDraft, position: positionDraft, is_char: isCharDraft, constant: constantDraft, fields: fieldsDraft, trigger_mode: triggerMode };
+    const body: any = { keys, content: contentDraft, position: triggerDraft.position, is_char: triggerDraft.isChar, constant: triggerDraft.constant, fields: triggerDraft.fields, trigger_mode: triggerMode };
     try {
       const res = await fetch(`${base}/api/oc/desk/lore/${row.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const d = await res.json().catch(() => null);
       if (!res.ok || !d || d.success !== true) throw new Error(d?.error || '保存失败(服务端没确认成功)');
-      onSaved({ keys, position: positionDraft, is_char: isCharDraft, constant: constantDraft, trigger_mode: triggerMode, fields: fieldsDraft, content: contentDraft });
+      onSaved({ keys, position: triggerDraft.position, is_char: triggerDraft.isChar, constant: triggerDraft.constant, trigger_mode: triggerMode, fields: triggerDraft.fields, content: contentDraft });
       setEditing(false);
     } catch (e: any) { setSaveErr(e.message || '保存失败'); }
     finally { setSaving(false); }
@@ -1259,52 +1257,15 @@ function LoreRowView({ row, base, first, busy, onToggle, onSaved, onEditingChang
               {/* 正文直接摆出来:这一行就是书架那一行,不再有"指针 vs 正本"的分身,也就没有
                   "预览是只读的"那句话要说了 */}
               <div style={{ fontSize: 12, color: 'var(--ink-body)', whiteSpace: 'pre-wrap', maxHeight: 160, overflowY: 'auto', lineHeight: 1.7 }}>{row.content || '（空)'}</div>
-              <button onClick={() => { setEditing(true); setKeysDraft(row.keys.join('、')); setContentDraft(row.content); setPositionDraft(row.position); setIsCharDraft(row.is_char); setConstantDraft(row.constant); setPresenceOnlyDraft(row.trigger_mode === 'presence'); setFieldsDraft(row.fields || {}); }} style={{ ...btnGhostStyle, marginTop: 10 }}>编辑</button>
+              <button onClick={() => { setEditing(true); setContentDraft(row.content); setTriggerDraft(rowToTriggerValue(row)); }} style={{ ...btnGhostStyle, marginTop: 10 }}>编辑</button>
             </>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <div>
-                <div style={fieldLabelStyle}>触发关键词<span style={{ marginLeft: 6, opacity: 0.8 }}>正文里出现这些词,这张卡才上场（跟书架的「标签」没有关系）</span></div>
-                <input value={keysDraft} onChange={(e) => setKeysDraft(e.target.value)} placeholder="比如：裴瑾、瑾（顿号或逗号分隔）" style={inputStyle} />
-              </div>
+              <LoreTriggerFields value={triggerDraft} onChange={(patch) => setTriggerDraft((prev) => ({ ...prev, ...patch }))} />
               <div>
                 <div style={fieldLabelStyle}>正文<span style={{ marginLeft: 6, opacity: 0.8 }}>就是书架上这本书的正文,在这儿改=在书架改</span></div>
                 <textarea value={contentDraft} onChange={(e) => setContentDraft(e.target.value)} style={{ ...inputStyle, minHeight: 120, resize: 'vertical', lineHeight: 1.7 }} />
               </div>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                <span style={{ ...fieldLabelStyle, marginBottom: 0 }}>装在哪儿</span>
-                <select value={positionDraft} onChange={(e) => setPositionDraft(e.target.value as any)} style={{ ...inputStyle, width: 'auto', cursor: 'pointer' }}>
-                  <option value="before">前置</option>
-                  <option value="after">后置</option>
-                  <option value="char">角色卡位</option>
-                </select>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--ink2)' }}>
-                  <input type="checkbox" checked={isCharDraft} onChange={(e) => setIsCharDraft(e.target.checked)} /> 是角色卡
-                </label>
-                {!isCharDraft && <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--ink2)' }}><input type="checkbox" checked={constantDraft} onChange={(e) => setConstantDraft(e.target.checked)} /> 常驻（无需关键词）</label>}
-                {isCharDraft && <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--ink2)' }}><input type="checkbox" checked={presenceOnlyDraft} onChange={(e) => setPresenceOnlyDraft(e.target.checked)} /> 只认状态板「在场角色」</label>}
-              </div>
-              {isCharDraft && presenceOnlyDraft && (
-                <div style={{ fontSize: 11, color: 'var(--ink2)', lineHeight: 1.6 }}>
-                  这张卡不再扫正文,只在状态板的「在场角色」里出现她时才上场。<b>单字名/容易撞词的名字用这个</b>——
-                  中文没有词边界,「露」会被"暴露/露出"勾出来,「寻」会被"寻找/寻常"勾出来。
-                </div>
-              )}
-              {isCharDraft && (
-                <div style={{ borderTop: '1px dashed var(--dash-line)', paddingTop: 8 }}>
-                  <button type="button" onClick={() => setShowAdvanced((v) => !v)} style={{ ...btnGhostStyle, fontSize: 11.5 }}>{showAdvanced ? '收起酒馆高级字段 ▲' : '酒馆高级字段（可选）▼'}</button>
-                  {showAdvanced && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 7, marginTop: 8 }}>
-                      <textarea value={fieldsDraft.description || ''} onChange={(e) => setFieldsDraft((p) => ({ ...p, description: e.target.value }))} placeholder="Description（留空则自动使用上面的完整正文）" style={{ ...inputStyle, minHeight: 70, resize: 'vertical' }} />
-                      <textarea value={fieldsDraft.personality || ''} onChange={(e) => setFieldsDraft((p) => ({ ...p, personality: e.target.value }))} placeholder="Personality（可选）" style={{ ...inputStyle, minHeight: 58, resize: 'vertical' }} />
-                      <textarea value={fieldsDraft.scenario || ''} onChange={(e) => setFieldsDraft((p) => ({ ...p, scenario: e.target.value }))} placeholder="Scenario（可选）" style={{ ...inputStyle, minHeight: 58, resize: 'vertical' }} />
-                      <textarea value={fieldsDraft.mes_example || ''} onChange={(e) => setFieldsDraft((p) => ({ ...p, mes_example: e.target.value }))} placeholder="Example Messages（可选）" style={{ ...inputStyle, minHeight: 70, resize: 'vertical' }} />
-                      <textarea value={fieldsDraft.main_prompt || ''} onChange={(e) => setFieldsDraft((p) => ({ ...p, main_prompt: e.target.value }))} placeholder="角色 Main Prompt 覆盖（预留）" style={{ ...inputStyle, minHeight: 58, resize: 'vertical' }} />
-                      <textarea value={fieldsDraft.post_history_instructions || ''} onChange={(e) => setFieldsDraft((p) => ({ ...p, post_history_instructions: e.target.value }))} placeholder="角色 Post-History Instructions（预留）" style={{ ...inputStyle, minHeight: 58, resize: 'vertical' }} />
-                    </div>
-                  )}
-                </div>
-              )}
               {saveErr && <div style={{ fontSize: 11.5, color: errColor }}>{saveErr}</div>}
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
                 <button onClick={() => setEditing(false)} disabled={saving} style={{ fontSize: 12, color: 'var(--ink2)', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}>取消</button>
