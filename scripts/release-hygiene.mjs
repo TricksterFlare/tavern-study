@@ -74,7 +74,24 @@ const allowedEnvTemplateNames = new Set(['.env.example', '.env.sample', '.env.te
 // Confirmed-legit hits get parked here instead of deleting the word that found them — each entry
 // is an exact `relative/path: label` string, kept narrow on purpose (see report for what's here
 // and why).
-const allowlist = new Set([]);
+const allowlist = new Set([
+  // Public attribution: the authors' names sit on purpose in the copyright line, the README
+  // credits paragraph, and the tour page footer. The same strings stay forbidden everywhere
+  // else in the repo — the hits are parked here instead of being deleted from the word list.
+  'LICENSE: private name',
+  'LICENSE: private project name (short)',
+  'LICENSE: private brand (alt host)',
+  'LICENSE: private short nickname B (ASCII)',
+  'README.md: private name',
+  'README.md: private project name (short)',
+  'docs/index.html: private name',
+  'docs/index.html: private project name (short)',
+  // Local-only dev files: gitignored and never tracked, so they only exist in the working
+  // tree this scanner walks. A real leak would surface as a tracked copy or under a
+  // different label — neither of which is exempted here.
+  '.dev.vars: Anthropic key',
+  'frontend/.env.local: forbidden file type',
+]);
 
 async function walk(directory) {
   const files = [];
