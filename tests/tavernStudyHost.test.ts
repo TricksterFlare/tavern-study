@@ -7,6 +7,12 @@ import { TavernStudyMcpServer } from '../src/mcp/server.ts';
 import type { AuthContext } from '../src/auth.ts';
 import type { ModelBackend, StreamChatArgs } from '../src/core/modelBackend.ts';
 
+// Generated-board fixtures must satisfy the write-path protocol gate (core/stateBoard.ts
+// stateBoardGateErrors): all five protocol keys present, target shapes down to sub-values.
+// `place` doubles as the distinguishing value the assertions key on.
+const protoBoard = (place: string) => ({ 在场角色: ['Mira'], 衣装: { Mira: 'cloak' }, 位置: place, 关系: {}, 时间地点: `night·${place}` });
+const protoFence = (place: string) => '```stateboard\n' + JSON.stringify(protoBoard(place)) + '\n```';
+
 test('runs the core study, reading, and generated desk turn in a memory-only host', async () => {
   const storage = createMemoryStorage({
     deskRecipes: [{ id: 'light', presetId: 'unused', weight: 'light', overrides: {}, regexIds: [], lightSystem: 'Write the next scene.' }],
@@ -14,7 +20,7 @@ test('runs the core study, reading, and generated desk turn in a memory-only hos
     chapters: [{ id: 'chapter-1', project: 'demo', chapterNo: '1', title: 'Arrival', content: 'The door opened.', summary: '', status: 'published', createdAt: '2026-01-01', updatedAt: null, publishedAt: '2026-01-01' }],
   });
   const model = new FakeModelBackend({
-    ok: true, terminal: 'clean', text: 'A warm room answered.\n```stateboard\n{"place":"study"}\n```', thinking: '',
+    ok: true, terminal: 'clean', text: `A warm room answered.\n${protoFence('study')}`, thinking: '',
     usage: { input: 10, output: 8, cacheRead: 0, cacheWrite: 0 },
   });
   const host = new TavernStudyHost({ storage, model, defaultModel: 'fixture' });
@@ -28,7 +34,7 @@ test('runs the core study, reading, and generated desk turn in a memory-only hos
   assert.equal(generated.success, true);
   const desk = await host.desk.getWindow(windowResult.window.id);
   assert.deepEqual(desk.success && desk.floors.map((floor) => floor.role), ['user', 'assistant']);
-  assert.deepEqual(desk.success && desk.window.stateBoard, { place: 'study' });
+  assert.deepEqual(desk.success && desk.window.stateBoard, protoBoard('study'));
   assert.equal(model.calls[0].model, 'fixture');
 
   const published = await host.reading.readPublished('chapter-1');
@@ -45,7 +51,7 @@ test('serializes same-window turns and includes the current input only once', as
     prompts.push(args.prompt);
     const current = args.prompt.endsWith('TWO') ? 'two' : 'one';
     if (current === 'one') await new Promise((resolve) => setTimeout(resolve, 10));
-    return { ok: true, terminal: 'clean', text: `${current}\n\`\`\`stateboard\n{"last":"${current}"}\n\`\`\``, thinking: '', usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
+    return { ok: true, terminal: 'clean', text: `${current}\n${protoFence(current)}`, thinking: '', usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
   } };
   const host = new TavernStudyHost({ storage, model });
   const made = await host.desk.createWindow({ project: 'p', title: 'w', recipeId: 'r' });
@@ -57,7 +63,7 @@ test('serializes same-window turns and includes the current input only once', as
   assert.equal(one.success && two.success, true);
   assert.equal(prompts[0].split('UNIQUE_ONE').length - 1, 1);
   const final = await host.desk.getWindow(made.window.id);
-  assert.deepEqual(final.success && final.window.stateBoard, { last: 'two' });
+  assert.deepEqual(final.success && final.window.stateBoard, protoBoard('two'));
   assert.deepEqual(final.success && final.floors.map((floor) => floor.content), ['UNIQUE_ONE', 'one', 'TWO', 'two']);
 });
 
@@ -111,15 +117,15 @@ test('foldDeskTimeline can be forced below the trigger and respects a custom kee
 
 test('refreshDeskBoard returns a draft without persisting and rejects a non-assistant last floor', async () => {
   const storage = createMemoryStorage({ deskRecipes: [{ id: 'r', presetId: 'p', weight: 'light', overrides: {}, regexIds: [], lightSystem: 'Continue.' }], deskPresetIds: ['p'] });
-  const model: ModelBackend = { async streamChat(args) { if (args.system[0]?.text.includes('state board')) return { ok: true, terminal: 'clean', text: '```stateboard\n{"place":"garden"}\n```', thinking: '', usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }; return { ok: true, terminal: 'clean', text: 'reply\n```stateboard\n{"place":"study"}\n```', thinking: '', usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }; } };
+  const model: ModelBackend = { async streamChat(args) { if (args.system[0]?.text.includes('state board')) return { ok: true, terminal: 'clean', text: protoFence('garden'), thinking: '', usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }; return { ok: true, terminal: 'clean', text: `reply\n${protoFence('study')}`, thinking: '', usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }; } };
   const host = new TavernStudyHost({ storage, model }); const made = await host.desk.createWindow({ project: 'p', title: 'w', recipeId: 'r' }); if (!made.success) return;
   await host.generateDeskTurn({ windowId: made.window.id, content: 'hello' });
   const refreshed = await host.refreshDeskBoard({ windowId: made.window.id });
   assert.equal(refreshed.success, true);
-  assert.deepEqual((refreshed as any).board, { place: 'garden' });
+  assert.deepEqual((refreshed as any).board, protoBoard('garden'));
   // Draft only: the window's own board is untouched until the caller explicitly saves it.
   const stillOriginal = await host.desk.getWindow(made.window.id);
-  assert.deepEqual(stillOriginal.success && stillOriginal.window.stateBoard, { place: 'study' });
+  assert.deepEqual(stillOriginal.success && stillOriginal.window.stateBoard, protoBoard('study'));
 });
 
 test('refreshDeskBoard rejects a window whose last floor has not been answered yet', async () => {
@@ -135,8 +141,8 @@ test('roll regenerates the last assistant floor as a new variant using its origi
   let call = 0;
   const model: ModelBackend = { async streamChat(args) {
     call++;
-    if (call === 1) return { ok: true, terminal: 'clean', text: 'first reply\n```stateboard\n{"place":"garden"}\n```', thinking: '', usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
-    return { ok: true, terminal: 'clean', text: `rerolled saw: ${args.prompt.includes('hello') ? 'hello' : 'missing'}\n\`\`\`stateboard\n{"place":"rerolled"}\n\`\`\``, thinking: '', usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
+    if (call === 1) return { ok: true, terminal: 'clean', text: `first reply\n${protoFence('garden')}`, thinking: '', usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
+    return { ok: true, terminal: 'clean', text: `rerolled saw: ${args.prompt.includes('hello') ? 'hello' : 'missing'}\n${protoFence('rerolled')}`, thinking: '', usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
   } };
   const host = new TavernStudyHost({ storage, model });
   const made = await host.desk.createWindow({ project: 'p', title: 'w', recipeId: 'r' });
@@ -149,7 +155,7 @@ test('roll regenerates the last assistant floor as a new variant using its origi
   assert.equal(first.success, true);
   const beforeRoll = await host.desk.getWindow(made.window.id);
   assert.equal(beforeRoll.success && beforeRoll.floors.length, 2);
-  assert.deepEqual(beforeRoll.success && beforeRoll.window.stateBoard, { place: 'garden' });
+  assert.deepEqual(beforeRoll.success && beforeRoll.window.stateBoard, protoBoard('garden'));
 
   const rolled = await host.generateDeskTurn({ windowId: made.window.id, roll: true });
   assert.equal(rolled.success, true);
@@ -160,7 +166,7 @@ test('roll regenerates the last assistant floor as a new variant using its origi
   assert.equal(assistantFloor?.variants.length, 2);
   assert.equal(assistantFloor?.activeVariant, 1);
   assert.match(assistantFloor?.content || '', /rerolled saw: hello/);
-  assert.deepEqual(afterRoll.success && afterRoll.window.stateBoard, { place: 'rerolled' });
+  assert.deepEqual(afterRoll.success && afterRoll.window.stateBoard, protoBoard('rerolled'));
 });
 
 test('full desk lifecycle in the memory host: import, generate, roll, switch, edit, truncate, fold, refresh, publish, and read back through MCP', async () => {
@@ -169,9 +175,9 @@ test('full desk lifecycle in the memory host: import, generate, roll, switch, ed
   const model: ModelBackend = { async streamChat(args) {
     const system = args.system[0]?.text || '';
     if (system.startsWith('Summarize')) return { ok: true, terminal: 'clean', text: 'Everything up to now, tidied into one paragraph.', thinking: '', usage: ZERO_USAGE };
-    if (system.includes('state board')) return { ok: true, terminal: 'clean', text: '```stateboard\n{"place":"refreshed"}\n```', thinking: '', usage: ZERO_USAGE };
+    if (system.includes('state board')) return { ok: true, terminal: 'clean', text: protoFence('refreshed'), thinking: '', usage: ZERO_USAGE };
     const tail = args.prompt.length > 40 ? args.prompt.slice(-40) : args.prompt;
-    return { ok: true, terminal: 'clean', text: `reply to: ${tail}\n\`\`\`stateboard\n{"place":"scene"}\n\`\`\``, thinking: '', usage: ZERO_USAGE };
+    return { ok: true, terminal: 'clean', text: `reply to: ${tail}\n${protoFence('scene')}`, thinking: '', usage: ZERO_USAGE };
   } };
   const host = new TavernStudyHost({ storage, model });
 
@@ -244,9 +250,9 @@ test('full desk lifecycle in the memory host: import, generate, roll, switch, ed
   // (the window's own board is untouched until the caller saves it — see refreshDeskBoard).
   const refreshed = await host.refreshDeskBoard({ windowId });
   assert.equal(refreshed.success, true);
-  assert.deepEqual((refreshed as any).board, { place: 'refreshed' });
+  assert.deepEqual((refreshed as any).board, protoBoard('refreshed'));
   const stillUnsaved = await host.desk.getWindow(windowId);
-  assert.deepEqual(stillUnsaved.success && stillUnsaved.window.stateBoard, { place: 'scene' });
+  assert.deepEqual(stillUnsaved.success && stillUnsaved.window.stateBoard, protoBoard('scene'));
 
   // 10) publish a chapter and add a study (shelf) entry for the read-back leg below.
   const draft = await host.reading.createDraft({ project: 'novella', chapterNo: '1', title: 'The Door', content: 'The heavy door creaked open at last.' });

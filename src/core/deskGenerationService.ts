@@ -1,7 +1,7 @@
 import type { DeskTurnCommit, DeskTurnStorage } from './storage.ts';
 import type { DeskFloor } from './types.ts';
 import type { ModelBackend, ModelStreamEvent } from './modelBackend.ts';
-import { parseStateBoard } from './stateBoard.ts';
+import { parseStateBoard, stateBoardGateErrors } from './stateBoard.ts';
 
 function unwrapContentTag(text: string): string {
   let value = String(text || ''); const open = '<content>'; const close = '</content>';
@@ -38,12 +38,18 @@ export class DeskGenerationService {
     if (!generated.ok) return { success: false, error: generated.kind, detail: generated.detail, usage: generated.usage };
     if (input.signal?.aborted) return { success: false, error: 'aborted', usage: generated.usage };
     const parsed = parseStateBoard(generated.text);
-    const stateBoard = parsed.board ?? input.stateBoard;
+    // Protocol gate (see stateBoardGateErrors in stateBoard.ts): a parsed board that drops keys
+    // or misses the target shapes is discarded whole — the input board carries over and the
+    // floor is flagged stale, with the reasons recorded for the frontend.
+    const gateErrors = parsed.board !== null ? stateBoardGateErrors(input.stateBoard, parsed.board) : [];
+    const boardUsable = parsed.board !== null && gateErrors.length === 0;
+    const stateBoard = boardUsable ? (parsed.board as Record<string, unknown>) : input.stateBoard;
     const content = unwrapContentTag(parsed.content);
     if (!content.trim()) return { success: false, error: 'empty', usage: generated.usage };
-    const { boardBefore: _boardBefore, boardAfter: _boardAfter, stateBoardStale: _stateBoardStale, commitToken: _commitToken, ...safeReport } = input.report;
+    const { boardBefore: _boardBefore, boardAfter: _boardAfter, stateBoardStale: _stateBoardStale, stateBoardGateErrors: _stateBoardGateErrors, commitToken: _commitToken, ...safeReport } = input.report;
     const commit: DeskTurnCommit = { content, thinking: generated.thinking.trim() || null,
-      report: { ...safeReport, stateBoardStale: parsed.board === null,
+      report: { ...safeReport, stateBoardStale: !boardUsable,
+        ...(gateErrors.length ? { stateBoardGateErrors: gateErrors } : {}),
         ...(input.boardBeforeTrusted ? { boardBefore: input.stateBoard } : {}), boardAfter: stateBoard }, stateBoard,
       committedAt: input.committedAt };
     const floor = input.mode === 'normal'

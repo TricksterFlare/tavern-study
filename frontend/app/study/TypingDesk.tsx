@@ -51,6 +51,9 @@ type FloorReport = {
   standardSlots?: Record<string, number>;
   totalEst?: number;
   stateBoardStale?: boolean;
+  // 解析成功但被后端协议闸拒收(缺协议键/丢键/协议键错形状,core/stateBoard.ts
+  // stateBoardGateErrors),这里带上人话原因列表
+  stateBoardGateErrors?: string[];
 };
 type FloorRole = 'user' | 'assistant';
 type Floor = {
@@ -300,7 +303,13 @@ function FloorReportView({ report }: { report: FloorReport | null | undefined })
   };
   return (
     <div className="mt-1.5 max-w-[85%] max-[760px]:max-w-[92%] border border-dashed border-dash-line rounded-xl bg-card/80 px-4 py-3 font-mono text-[11px] leading-relaxed text-ink-body break-all whitespace-pre-wrap">
-      {report.stateBoardStale && <div style={{ color: '#c2693f', marginBottom: 6 }}>这楼的状态板没解析出来,沿用旧板</div>}
+      {report.stateBoardStale && (
+        <div style={{ color: '#c2693f', marginBottom: 6 }}>
+          {Array.isArray(report.stateBoardGateErrors) && report.stateBoardGateErrors.length
+            ? `模型这楼写的状态板没过协议闸(${report.stateBoardGateErrors.join(';')}),没敢用,沿用旧板`
+            : '这楼的状态板没解析出来,沿用旧板'}
+        </div>
+      )}
       {typeof report.totalEst === 'number' && <div className="serc" style={{ fontSize: 13, color: 'var(--ink-deep)', marginBottom: 6 }}>本次发送估算约 {report.totalEst} tokens</div>}
       <div>积木({blocks.length}): {blocks.length ? blocks.map((b) => `${b.name || b.identifier}(~${b.tokensEst})`).join(', ') : '—'}</div>
       <div style={{ marginTop: 4 }}>世界书命中: {loreHits.length ? loreHits.join('、') : '—'}</div>

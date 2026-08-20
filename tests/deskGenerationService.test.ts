@@ -5,17 +5,37 @@ import { createMemoryStorage } from '../src/adapters/memoryStorage.ts';
 import { DeskGenerationService } from '../src/core/deskGenerationService.ts';
 
 const usage = { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 };
+// Generated-board fixtures must satisfy the write-path protocol gate (core/stateBoard.ts
+// stateBoardGateErrors); `place` is the distinguishing value the assertions key on.
+const protoBoard = (place: string) => ({ 在场角色: ['Mira'], 衣装: { Mira: 'cloak' }, 位置: place, 关系: {}, 时间地点: `night·${place}` });
+const protoFence = (place: string) => '```stateboard\n' + JSON.stringify(protoBoard(place)) + '\n```';
 const windowSeed = { id: 'w', project: 'P', title: 'W', recipeId: 'r', note: '', noteDepth: 3, stateBoard: {}, timelineState: {}, vars: {}, createdAt: 't0', updatedAt: 't0' };
 const userSeed = { id: 'u', windowId: 'w', role: 'user' as const, content: 'go', variants: ['go'], activeVariant: 0, thinking: null, report: null, createdAt: 't0' };
 async function seededStorage() { const storage = createMemoryStorage({ deskWindows: [windowSeed] }); await storage.desk.createFloor(userSeed); return storage; }
 
 test('commits only a clean model result and streams progress events', async () => {
   const storage = await seededStorage(); const seen: string[] = [];
-  const backend = new FakeModelBackend({ ok: true, terminal: 'clean', text: '<content>\nstory\n</content>\n```stateboard\n{"place":"new"}\n```', thinking: ' thought ', usage }, [{ type: 'text', text: 'story' }]);
+  const backend = new FakeModelBackend({ ok: true, terminal: 'clean', text: `<content>\nstory\n</content>\n${protoFence('new')}`, thinking: ' thought ', usage }, [{ type: 'text', text: 'story' }]);
   const service = new DeskGenerationService(backend, storage.deskTurn);
-  const result = await service.generate({ windowId: 'w', mode: 'normal', floorId: 'f', userFloor: userSeed, system: [], prompt: 'go', model: 'fake', report: {}, stateBoard: { place: 'old' }, boardBeforeTrusted: true, committedAt: 't1', onEvent: (event) => { seen.push(event.type); } });
+  const result = await service.generate({ windowId: 'w', mode: 'normal', floorId: 'f', userFloor: userSeed, system: [], prompt: 'go', model: 'fake', report: {}, stateBoard: protoBoard('old'), boardBeforeTrusted: true, committedAt: 't1', onEvent: (event) => { seen.push(event.type); } });
   assert.equal(result.success, true); assert.equal((await storage.desk.getFloor('f'))?.content, 'story');
-  assert.deepEqual((await storage.desk.getWindow('w'))?.stateBoard, { place: 'new' }); assert.deepEqual((await storage.desk.getFloor('f'))?.report?.boardBefore, { place: 'old' }); assert.deepEqual(seen, ['text']);
+  assert.deepEqual((await storage.desk.getWindow('w'))?.stateBoard, protoBoard('new')); assert.deepEqual((await storage.desk.getFloor('f'))?.report?.boardBefore, protoBoard('old')); assert.deepEqual(seen, ['text']);
+});
+
+test('discards a generated board that fails the protocol gate and keeps the input board', async () => {
+  const storage = await seededStorage();
+  // Flat-string board: parses fine, but misses the protocol keys and target shapes.
+  const backend = new FakeModelBackend({ ok: true, terminal: 'clean', text: 'story\n```stateboard\n{"place":"new"}\n```', thinking: '', usage });
+  const service = new DeskGenerationService(backend, storage.deskTurn);
+  const result = await service.generate({ windowId: 'w', mode: 'normal', floorId: 'f', userFloor: userSeed, system: [], prompt: 'go', model: 'fake', report: {}, stateBoard: protoBoard('old'), boardBeforeTrusted: true, committedAt: 't1' });
+  assert.equal(result.success, true);
+  // The floor still commits; only the board is refused — input board carries over, floor is
+  // flagged stale, and the reasons are recorded for the frontend.
+  assert.deepEqual((await storage.desk.getWindow('w'))?.stateBoard, protoBoard('old'));
+  const report = (await storage.desk.getFloor('f'))?.report || {};
+  assert.equal(report.stateBoardStale, true);
+  assert.equal(Array.isArray(report.stateBoardGateErrors) && (report.stateBoardGateErrors as string[]).length > 0, true);
+  assert.deepEqual(report.boardAfter, protoBoard('old'));
 });
 
 test('does not write partial text when the backend lacks a clean terminal result', async () => {

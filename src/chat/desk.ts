@@ -18,7 +18,7 @@ import { makeD1UsageSink } from '../storage/usageSink';
 import { assembleDesk } from './deskAssemble';
 import { loadDeskTimelineState, renderTimelineText, parseDeskTimelineCutoff, maybeFoldDeskTimeline, invalidateDeskTimelineIfFolded, fenceDeskTimelineAfterWrite } from './deskTimeline';
 import type { Ai, VectorizeIndex } from '../storage/vectorize';
-import { parseStateBoard as parseCoreStateBoard, STATEBOARD_MAX_BYTES as CORE_STATEBOARD_MAX_BYTES } from '../core/stateBoard.ts';
+import { parseStateBoard as parseCoreStateBoard, STATEBOARD_MAX_BYTES as CORE_STATEBOARD_MAX_BYTES, stateBoardGateErrors } from '../core/stateBoard.ts';
 import type { DeskAssetStorage, DeskStorage, DeskStoryStorage, DeskTurnStorage, SemanticSearchAdapter } from '../core/storage.ts';
 import { AnthropicStreamBackend } from '../adapters/streamModelBackends.ts';
 import { validateDeskChannelConfig } from '../core/deskChannelConfig.ts';
@@ -305,13 +305,18 @@ export async function handleDeskChat(
     // 先剥状态板，再于落库前剥正文最外层 <content> 壳。
     const content = unwrapContentTag(rawContent);
     const now = new Date().toISOString();
-    // appliedBoard 是本轮实际生效板：解析成功用新板，否则继承装配输入板。
-    // report.boardAfter 与 window.state_board 必须使用同一值；stale 仍以 board===null 判定。
-    const appliedBoard: Record<string, any> = board !== null ? board : effectiveStateBoard;
-    // 每次提交生成唯一 commitToken，供 roll 窗口 UPDATE 确认是本次楼层写入。
+    // 协议闸(判据与设计取舍见 core/stateBoard.ts stateBoardGateErrors 头注释):缺协议键/丢输入键/
+    // 协议键错形状,任一中招整板弃用。基线=effectiveStateBoard(normal=窗口当前板,roll=roll快照板)。
+    const boardGateErrors = board !== null ? stateBoardGateErrors(effectiveStateBoard, board) : [];
+    const boardUsable = board !== null && boardGateErrors.length === 0;
+    // appliedBoard 是本轮实际生效板：解析成功且过协议闸用新板，否则继承装配输入板。
+    // report.boardAfter 与 window.state_board 必须使用同一值；stale 以 !boardUsable 判定(解析失败/被闸拒同一待遇)。
+    const appliedBoard: Record<string, any> = boardUsable ? (board as Record<string, any>) : effectiveStateBoard;
+    // 每次提交由存储层生成唯一 commitToken，供 roll 窗口 UPDATE 确认是本次楼层写入。
     // boardBefore 只保存可信输入快照；老楼 roll 回退的推测板不得升格成权威档案。
     const boardBeforeTrusted = mode === 'normal' || foundRollBoard;
-    const reportOut = { ...report, stateBoardStale: board === null, ...(boardBeforeTrusted ? { boardBefore: effectiveStateBoard } : {}), boardAfter: appliedBoard };
+    // stateBoardGateErrors 只在"解析成功但被闸拒"时落report,给前端说清弃用原因(纯解析失败仍走老文案)
+    const reportOut = { ...report, stateBoardStale: !boardUsable, ...(boardGateErrors.length ? { stateBoardGateErrors: boardGateErrors } : {}), ...(boardBeforeTrusted ? { boardBefore: effectiveStateBoard } : {}), boardAfter: appliedBoard };
     let floorId = '';
 
     // 楼层写与窗口板 UPDATE 同事务；任一失败整批回滚，禁止半截态。
