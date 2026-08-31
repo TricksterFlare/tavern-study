@@ -58,9 +58,16 @@ const STATEBOARD_INSTRUCTION =
   '若板子里已有「未收伏笔」键,每楼同步维护它:该键写成按线索分键的对象,每条伏笔一个子键(几个字的短标签)、值为一句话描述,还是旧的数组或整句写法就本楼拆开重写,拆的时候逐条照搬、一条不许丢也不许趁机增删改;新埋下的线索、未兑现的约定、悬而未答的问题添进去,已收线的移除,已经失效或被剧情绕过的也一并移除;全键最多保留7条,超出时合并同类、优先保留对后续剧情最要紧的;注意区分"计划未执行"和"事件已发生",整个键不许自行删除;板上没有这个键就不要自己发明。' +
   '这个围栏必须是这次回复的最后一行结束,围栏之后不许再写任何字。';
 
-// ===== token 粗估：字符数/3 上取整，不接 tokenizer =====
+// ===== token 粗估：认字的秤,不接 tokenizer =====
+// CJK 在 Claude 分词器里约 1~1.5 token/字,ASCII 约 3.5~4 字符/token——两类字反着走,
+// 一刀切 chars/3 是英文经验值,纯中文块会缩到真实量的 1/3~1/5。
+// 字符集覆盖 CJK 部首/标点/假名/统一表意(2E80-9FFF)、兼容表意(F900-FAFF)、全角(FF00-FFEF)。
+// 用字符串构造而不写字面 CJK 字符:兼容表意区的字面字符会被编辑器/规范化悄悄换成同形的统一表意码点。
+const CJK_RE = new RegExp('[\\u2E80-\\u9FFF\\uF900-\\uFAFF\\uFF00-\\uFFEF]', 'g');
 export function estTokens(text: string): number {
-  return Math.ceil(String(text || '').length / 3);
+  const s = String(text || '');
+  const cjk = (s.match(CJK_RE) || []).length;
+  return Math.ceil(cjk * 1.5 + (s.length - cjk) / 3.5);
 }
 
 // ===== 剧情核心记忆解析:oc_state 的 desk_core:<project> 值可能是 JSON(数组/对象)或纯文本 =====
@@ -621,8 +628,7 @@ export async function assembleDesk(env: DeskAssembleEnv, params: AssembleParams)
     if (standardSlotIds.has(b.identifier)) standardSlots[b.identifier] = (standardSlots[b.identifier] || 0) + b.tokensEst;
   }
   if (includeHistory) standardSlots.chatHistory = estTokens(streamParts.join('\n\n'));
-  const systemChars = system.reduce((n, s) => n + s.text.length, 0);
-  const totalEst = Math.ceil((systemChars + tail.length) / 3);
+  const totalEst = system.reduce((n, s) => n + estTokens(s.text), 0) + estTokens(tail);
 
   return {
     success: true,

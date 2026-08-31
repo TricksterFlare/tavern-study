@@ -504,6 +504,9 @@ html,body{margin:0;padding:10px 14px;box-sizing:border-box;color-scheme:light da
 font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,"PingFang SC","Microsoft YaHei",sans-serif;
 font-size:13.5px;line-height:1.6;overflow:auto;word-break:break-word;}
 *{box-sizing:border-box;}
+/* 选字权兜底:酒馆系预设模板自带 user-select:none 是常态,但卡里渲染的是部署者自己的正文——
+   能读就必须能选能复制,预设的禁选一律压掉(iOS 长按选字对此尤其敏感)。 */
+*{-webkit-user-select:text !important;user-select:text !important;-webkit-touch-callout:default !important;}
 </style></head><body>${html}<script>(function(){
 function report(){
   var h = Math.max(
