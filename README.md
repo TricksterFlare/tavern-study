@@ -137,7 +137,7 @@ const mcp = new TavernStudyMcpServer(host, authContext);
 | 能力 | 支持到什么程度 | 边界 |
 |---|---|---|
 | 预设导入（prompt_order） | 只认 `prompt_order` 数组的第一份 | ST 每次对话按角色/群取一份 order；多角色/多 order 预设导入时会带 `warning` 提示"预设带 N 份 prompt_order，只认第一份"（`src/tools/desk.ts`） |
-| 宏 | 只实现 `{{user}}`/`{{char}}`/`{{setvar::name::value}}`/`{{getvar::name}}`/`{{trim}}` 这五个 | 未识别的宏（如 `{{time}}`、`{{roll:1d6}}`）原样保留，不猜、不吞（`src/tools/deskMacro.ts`） |
+| 宏 | 实现 `{{user}}`/`{{char}}`/`{{setvar}}`/`{{getvar}}`/`{{setglobalvar}}`/`{{getglobalvar}}`（与 `setvar`/`getvar` 同一变量池的别名）/`{{addvar}}`（追加到已有值之后，两边都是数字则相加）/`{{addglobalvar}}`/`{{trim}}`/`{{// 注释}}`（渲染空串）/`{{lastUserMessage}}`（渲染本轮输入），支持宏嵌套（值里套宏，配平扫描找真正的闭合；因此值里的字面 `{{`/`}}` 也参与配平，不再按"最近的 `}}`"截断）；认识的宏名不带 `::` 参数（如 `{{setvar}}`）不算宏 | 未识别的宏（如 `{{time}}`、`{{roll:1d6}}`）原样保留，不猜、不吞（`src/tools/deskMacro.ts`） |
 | Marker 保留字 | 只对 `worldInfoBefore`/`worldInfoAfter`/`charDescription`/`charPersonality`/`scenario`/`chatExamples`/`personaDescription` 这几个 identifier 做特殊展开 | 其余 marker 块（如 `main`）原样走宏替换，不做任何展开（`src/chat/deskAssemble.ts` `renderBlock`） |
 | Injection position/depth | 导入时解析并落库（`injection_position`/`injection_depth`/`injection_order`） | 装配排队只按 `queue_pos` 排序，**不按 injection depth 重新定位**——是"有解析、无完整 ST 注入语义"，不是"完整实现"（`src/tools/desk.ts` 导入 vs `src/chat/deskAssemble.ts` `buildOrderedQueue`） |
 | 队列里 system/user/assistant 混排 | 队列前段（chatHistory 之前）遇到第一个 user/assistant 角色块之后，后续块全部降级进 tail、带角色标签 | 这是 Claude 单 system envelope 不支持"历史中途再插一条真 system"的限制，不是能力阉割；相对顺序仍然保留（`src/chat/deskAssemble.ts` 装配 pre 队列处的注释） |

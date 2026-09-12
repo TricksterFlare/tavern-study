@@ -199,7 +199,7 @@ ST 正则脚本子集：`find`/`replace`/`flags`/`direction`。见 `src/tools/de
 | `note_depth` | 笔记插入深度 |
 | `state_board` | JSON，当前状态板（在场角色/开放线索等结构化字段） |
 | `timeline_state` | JSON，`{ segs: [...], cutoff, rev }`——时光带摘要段数组（硬顶 20 段）、折叠截止点、版本号 |
-| `vars` | JSON，宏变量池（`{{setvar}}`/`{{getvar}}`） |
+| `vars` | JSON，宏变量池（`{{setvar}}`/`{{getvar}}`/`{{addvar}}`，`setglobalvar`/`getglobalvar`/`addglobalvar` 是同一个池的别名） |
 | `created_at`/`updated_at` | 时间戳；`updated_at` 同时是乐观并发锁的版本戳（见 `DeskStorage.updateTimelineState` 的 `expectedUpdatedAt` 参数） |
 
 索引：`project`。

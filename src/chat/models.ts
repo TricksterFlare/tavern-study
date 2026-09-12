@@ -12,6 +12,7 @@ export interface ModelProfile {
 export const DEFAULT_MODEL = 'claude-opus-4-8';
 
 export const MODEL_PROFILES: Record<string, ModelProfile> = {
+  'claude-fable-5-1':  { thinking: 'adaptive', display: 'summarized', effort: true,  maxTokens: 64000 }, // Fable 5.1:请求姿势同 Fable 5;tool_choice 只支持 auto
   'claude-fable-5':    { thinking: 'adaptive', display: 'summarized', effort: true,  maxTokens: 64000 }, // Fable 5:thinking永远在线(显式传adaptive合法,disabled/budget_tokens会400);安全分类器可能回stop_reason:"refusal"
   'claude-opus-5':     { thinking: 'adaptive', display: 'summarized', effort: true,  maxTokens: 64000 }, // Opus 5:thinking默认就开(不传=adaptive);disabled只在effort≤high合法,配xhigh/max会400;budget_tokens/temperature同样400;同带refusal终态
   'claude-opus-4-8':   { thinking: 'adaptive', display: 'summarized', effort: true,  maxTokens: 64000 },

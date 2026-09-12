@@ -50,6 +50,9 @@ type FloorReport = {
   layers?: Record<string, number>;
   standardSlots?: Record<string, number>;
   totalEst?: number;
+  // 这轮 API 回报的真实 token 账(desk.ts finalizeDeskTurn 落库时并进 report;拿不到账时后端
+  // 整个不落这个键)。跟 totalEst 摆一起对"估算 vs 实发"的账。
+  usageActual?: { input?: number; output?: number; cache_read?: number; cache_write?: number };
   stateBoardStale?: boolean;
   // 解析成功但被后端协议闸拒收(缺协议键/丢键/协议键错形状,core/stateBoard.ts
   // stateBoardGateErrors),这里带上人话原因列表
@@ -296,6 +299,16 @@ function FloorReportView({ report }: { report: FloorReport | null | undefined })
   const recent = Array.isArray(report.recentChapters) ? report.recentChapters : [];
   const layers = report.layers && typeof report.layers === 'object' ? report.layers : {};
   const standardSlots = report.standardSlots && typeof report.standardSlots === 'object' ? report.standardSlots : {};
+  // 实发账(desk.ts finalizeDeskTurn 落库):同为裸 JSON,逐项 finiteNum 归一;四项全拿不到就当没有。
+  // 发送侧真实注入 = input + cache_read + cache_write(缓存读写也是发出去的字,只是计价不同)。
+  const uaObj = asObj(report.usageActual);
+  const uaIn = uaObj ? finiteNum(uaObj.input) : null;
+  const uaOut = uaObj ? finiteNum(uaObj.output) : null;
+  const uaCr = uaObj ? finiteNum(uaObj.cache_read) : null;
+  const uaCw = uaObj ? finiteNum(uaObj.cache_write) : null;
+  const uaSent = uaObj && (uaIn !== null || uaCr !== null || uaCw !== null)
+    ? (uaIn ?? 0) + (uaCr ?? 0) + (uaCw ?? 0)
+    : null;
   const slotLabels: Record<string, string> = {
     worldInfoBefore: 'World Info (before)', charDescription: 'Char Description',
     charPersonality: 'Char Personality', scenario: 'Scenario', worldInfoAfter: 'World Info (after)',
@@ -311,6 +324,11 @@ function FloorReportView({ report }: { report: FloorReport | null | undefined })
         </div>
       )}
       {typeof report.totalEst === 'number' && <div className="serc" style={{ fontSize: 13, color: 'var(--ink-deep)', marginBottom: 6 }}>本次发送估算约 {report.totalEst} tokens</div>}
+      {uaSent !== null && (
+        <div className="serc" style={{ fontSize: 13, color: 'var(--ink-deep)', marginBottom: 6 }}>
+          这楼实发 {uaSent} tokens(直读 {uaIn ?? 0} + 缓存读 {uaCr ?? 0} + 缓存写 {uaCw ?? 0}){uaOut !== null ? ` · 输出 ${uaOut}` : ''}
+        </div>
+      )}
       <div>积木({blocks.length}): {blocks.length ? blocks.map((b) => `${b.name || b.identifier}(~${b.tokensEst})`).join(', ') : '—'}</div>
       <div style={{ marginTop: 4 }}>世界书命中: {loreHits.length ? loreHits.join('、') : '—'}</div>
       <div style={{ marginTop: 4 }}>召回老章: {recalled.length ? recalled.join('、') : '—'}</div>
@@ -339,6 +357,8 @@ const DESK_MODELS = [
   { id: 'claude-opus-4-7', label: 'Opus 4.7' },
   { id: 'claude-opus-4-8', label: 'Opus 4.8' },
   { id: 'claude-opus-5', label: 'Opus 5' },
+  { id: 'claude-fable-5', label: 'Fable 5' },
+  { id: 'claude-fable-5-1', label: 'Fable 5.1' },
 ];
 
 // ── 每楼下方的动作条(编辑/复制/透视/楼层号/时间戳)。user 楼层和 assistant 楼层共用同一条,

@@ -303,7 +303,7 @@ export async function assembleDesk(env: DeskAssembleEnv, params: AssembleParams)
   const ctxUser = windowVars.user || windowVars.persona || '你';
   const ctxChar = windowVars.char || '角色';
   const runMacro = (text: string): string => {
-    const r = applyMacros(text, { user: ctxUser, char: ctxChar, vars: windowVars });
+    const r = applyMacros(text, { user: ctxUser, char: ctxChar, vars: windowVars, lastUserMessage: input });
     Object.assign(windowVars, r.vars); // 变量池随 setvar 按文档序滚动更新,后面的块读得到前面块 set 的值
     return r.text;
   };

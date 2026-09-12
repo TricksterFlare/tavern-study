@@ -300,7 +300,9 @@ export async function handleDeskChat(
   // 楼层变更与窗口板必须在同一 D1 batch 原子提交；roll 的窗口写还须由楼层 CAS 后置状态守卫。
   // roll 绑定请求起点的楼层快照；生成期间若被切版本、重生成或手改，整轮结果与状态板一并作废。
   // 所有楼层变更都须先 invalidate 时光带、写后再 fence；busy 直接报冲突。
-  async function finalizeDeskTurn(allText: string, allThinking: string): Promise<{ floorId: string } | { conflict: true }> {
+  // usageActual:这轮上游回报的真实 token 账,并进 report 落库给透视面板对"估算 vs 实发"。
+  // 全零不落——拿不到账时给的就是全零,空账会糊住前端实发行。
+  async function finalizeDeskTurn(allText: string, allThinking: string, usageActual?: { input: number; output: number; cache_read: number; cache_write: number }): Promise<{ floorId: string } | { conflict: true }> {
     const { content: rawContent, board } = parseStateBoard(allText);
     // 先剥状态板，再于落库前剥正文最外层 <content> 壳。
     const content = unwrapContentTag(rawContent);
@@ -316,7 +318,8 @@ export async function handleDeskChat(
     // boardBefore 只保存可信输入快照；老楼 roll 回退的推测板不得升格成权威档案。
     const boardBeforeTrusted = mode === 'normal' || foundRollBoard;
     // stateBoardGateErrors 只在"解析成功但被闸拒"时落report,给前端说清弃用原因(纯解析失败仍走老文案)
-    const reportOut = { ...report, stateBoardStale: !boardUsable, ...(boardGateErrors.length ? { stateBoardGateErrors: boardGateErrors } : {}), ...(boardBeforeTrusted ? { boardBefore: effectiveStateBoard } : {}), boardAfter: appliedBoard };
+    const hasUsage = !!usageActual && (usageActual.input + usageActual.output + usageActual.cache_read + usageActual.cache_write) > 0;
+    const reportOut = { ...report, stateBoardStale: !boardUsable, ...(boardGateErrors.length ? { stateBoardGateErrors: boardGateErrors } : {}), ...(boardBeforeTrusted ? { boardBefore: effectiveStateBoard } : {}), ...(hasUsage ? { usageActual } : {}), boardAfter: appliedBoard };
     let floorId = '';
 
     // 楼层写与窗口板 UPDATE 同事务；任一失败整批回滚，禁止半截态。
@@ -361,17 +364,17 @@ export async function handleDeskChat(
       else if (event.type === 'usage') await send({ type: 'usage', input: event.usage.input || 0, cache_read: event.usage.cacheRead || 0, cache_write: event.usage.cacheWrite || 0 });
     } });
     signal?.removeEventListener('abort', abort);
+    const usage = result.usage || { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
     if (!result.ok) {
       failed = result.kind !== 'aborted';
       if (!clientGone && result.kind !== 'aborted') await send({ type: 'error', error: `模型渠道未正常收尾(${result.kind})，这轮没有存档` });
     } else {
       try {
-        const saved = await finalizeDeskTurn(result.text, result.thinking);
+        const saved = await finalizeDeskTurn(result.text, result.thinking, { input: usage.input || 0, output: usage.output || 0, cache_read: usage.cacheRead || 0, cache_write: usage.cacheWrite || 0 });
         if ('conflict' in saved) { failed = true; await send({ type: 'error', error: '这一楼在生成期间被改动过,本次结果已丢弃,请重试' }); }
         else await send({ type: 'done', id: saved.floorId });
       } catch (error: any) { failed = true; await send({ type: 'error', error: `存档失败: ${error.message}` }); }
     }
-    const usage = result.usage || { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
     try { const log = () => usageSink.logUsage('desk', model, { input: usage.input, output: usage.output, cache_read: usage.cacheRead, cache_write: usage.cacheWrite }, failed ? 'failed' : 'ok'); if (waitUntil) waitUntil(log()); else await log(); } catch (error) { console.error('[desk] 记账失败(不拖垮存档)', error); }
     try { await writer.close(); } catch {}
     if (waitUntil) waitUntil(maybeFoldDeskTimeline(env as any, windowId)); else maybeFoldDeskTimeline(env as any, windowId);

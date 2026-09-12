@@ -1,52 +1,111 @@
 // src/tools/deskMacro.ts
-// desk · 打字桌宏引擎 + 上行正则管道(Day94 S2施工工单):纯文本变换,不碰 D1/env。
-// 施工工单§0铁律1"不搬酒馆的楼,学酒馆的方言"——这里吃 ST 的宏方言子集和正则替换字符串方言,
-// 原生盖在咱家自己的装配管线上(chat/deskAssemble.ts 调用这两组函数,不逆向依赖)。
-//
-// 纯函数(applyMacros/applyUpRegex/matchLoreKeys)不碰 D1/env,verify_desk_assemble.mjs
-// 直接复制这几个函数体对着真实预设样本跑断言,改这里记得把验证脚本也搬一遍。
-//
-// isPatternUnsafe 从 shared/regexSafety.ts 借来复用(工单Fix2b纵深防御,同一份"疑似灾难性回溯"
-// 判定逻辑只许一处定义)——该模块是纯函数,这条 import 不引入 D1/env 依赖,不算破例。
+// desk · 打字桌宏引擎 + 上行正则管道:纯文本变换,不碰存储/env。
+// 只实现 ST 宏方言与正则替换字符串方言的子集,盖在自家装配管线上(chat/deskAssemble.ts 调用,不逆向依赖)。
+// isPatternUnsafe 从 shared/regexSafety.ts 复用:"疑似灾难性回溯"判定只许一处定义。
 
 import { isPatternUnsafe } from '../shared/regexSafety.ts';
 
-// ===== 宏引擎:ST 方言子集 {{user}}/{{char}}/{{setvar::name::value}}/{{getvar::name}}/{{trim}} =====
-//
-// {{setvar::name::value}} 落变量池、渲染成空串;{{getvar::name}} 读变量池(没设过=空串);
-// 未识别的宏(如 {{time}}/{{roll:1d6}})原样保留,不瞎猜、不吞掉——这是"方言子集"而非"全量实现"的边界。
-//
-// 单趟正则 + 回调函数处理 {{user}}/{{char}}/{{setvar}}/{{getvar}}(trim 留给第二趟,原因见下):
-// JS 的 String.replace 配全局正则时回调按从左到右的文档序依次触发,setvar 的副作用(改 vars)
-// 天然按文档序发生——这正是工单要的"变量池随 setvar 在文档序里滚动更新"。
+// ===== 宏引擎:ST 方言子集 {{user}}/{{char}}/{{setvar}}/{{getvar}}/{{addvar}}/{{setglobalvar}}/{{getglobalvar}}/{{addglobalvar}}/{{trim}}/{{// 注释}}/{{lastUserMessage}} =====
+// setvar 落变量池、渲染空串;getvar 读池(没设过=空串);addvar 追加到池里已有值之后(两边都是数字则相加),渲染空串——
+// 预设"可多选"区靠它叠便签,setvar 是"单选"(后者覆盖前者)。globalvar 三个是 setvar/getvar/addvar 的别名(同一个池)。
+// {{// 任意文字}} 是作者注释,渲染空串;{{lastUserMessage}} 渲染本轮输入(ctx 不给就空串)。
+// 宏可嵌套(便签值里套宏):配平扫描找真正的闭合,set/add 时先展开 value 再存。未识别的宏原样保留。
 export interface MacroCtx {
   user: string;
   char: string;
   vars: Record<string, string>;
+  lastUserMessage?: string;
 }
 
-const MACRO_RE = /\{\{([\s\S]*?)\}\}/g;
+// setvar 的 value 递归展开的深度上限,超过就原样保留(防 setvar 套 setvar 无限套)。
+const MAX_MACRO_DEPTH = 16;
+
+// 一趟栈配平:算出每个 "{{" 闭合 "}}" 之后的位置(孤儿 "{{" 不进 Map)。整段只扫一遍,O(n)。
+function matchMacroBraces(s: string): Map<number, number> {
+  const closeOf = new Map<number, number>();
+  const stack: number[] = [];
+  let j = 0;
+  while (j < s.length) {
+    if (s.startsWith('{{', j)) { stack.push(j); j += 2; }
+    else if (s.startsWith('}}', j)) { const open = stack.pop(); if (open !== undefined) closeOf.set(open, j + 2); j += 2; }
+    else { j++; }
+  }
+  return closeOf;
+}
+
+// addvar 语义(照 ST):两边都是纯数字就相加,否则字符串拼接;没设过当空串。
+function addValue(prev: string | undefined, inc: string): string {
+  const a = prev ?? '';
+  const isNum = (s: string) => s.trim() !== '' && Number.isFinite(Number(s));
+  if (isNum(a) && isNum(inc)) return String(Number(a) + Number(inc));
+  return a + inc;
+}
+
+// 单个宏按前缀分派渲染。vars 原地改,setvar/addvar 的副作用按文档序立刻生效。
+function renderMacro(inner: string, full: string, ctx: MacroCtx, vars: Record<string, string>, depth: number): string {
+  if (inner === 'user') return ctx.user;
+  if (inner === 'char') return ctx.char;
+  if (inner === 'trim') return full; // 占位不动,第二趟处理
+  if (inner === 'lastUserMessage') return ctx.lastUserMessage ?? '';
+  if (inner.startsWith('//')) return ''; // 作者注释
+
+  // 只在第一个 "::" 切宏名;setvar 再切一刀拿 name,剩下整段是 value(value 里的字面 "::" 保留)
+  const sepIdx = inner.indexOf('::');
+  const head = sepIdx === -1 ? inner : inner.slice(0, sepIdx);
+
+  const isSet = head === 'setvar' || head === 'setglobalvar';
+  const isAdd = head === 'addvar' || head === 'addglobalvar';
+  const isGet = head === 'getvar' || head === 'getglobalvar';
+  // 认识的宏名但没带 "::" 参数(如 {{setvar}}):不算合法宏,原样保留
+  if ((isSet || isAdd || isGet) && sepIdx === -1) return full;
+  if (isSet || isAdd) {
+    const rest = inner.slice(sepIdx + 2);
+    const nameSep = rest.indexOf('::');
+    const name = nameSep === -1 ? rest : rest.slice(0, nameSep);
+    const rawValue = nameSep === -1 ? '' : rest.slice(nameSep + 2);
+    const expandedValue = scanMacros(rawValue, ctx, vars, depth + 1); // 先展开 value 再存
+    if (name) vars[name] = isAdd ? addValue(vars[name], expandedValue) : expandedValue;
+    return '';
+  }
+
+  if (isGet) {
+    const name = inner.slice(sepIdx + 2);
+    return vars[name] ?? ''; // 存的时候已展开,这里不再递归(也防自引用死循环)
+  }
+
+  return full; // 未识别宏整个原样保留,内部不展开
+}
+
+// 核心扫描器:先算好配平表,再从左到右逐个宏渲染。孤儿 "{{" 只原样吐它自己两个字符,后面的宏照常。
+function scanMacros(text: string, ctx: MacroCtx, vars: Record<string, string>, depth: number): string {
+  const s = String(text || '');
+  if (depth > MAX_MACRO_DEPTH) return s;
+
+  const closeOf = matchMacroBraces(s);
+  let out = '';
+  let i = 0;
+  while (i < s.length) {
+    const openIdx = s.indexOf('{{', i);
+    if (openIdx === -1) { out += s.slice(i); break; }
+    out += s.slice(i, openIdx);
+    const closeIdx = closeOf.get(openIdx);
+    if (closeIdx === undefined) {
+      out += '{{'; // 孤儿开括号:原样保留,不当宏处理
+      i = openIdx + 2;
+      continue;
+    }
+    const full = s.slice(openIdx, closeIdx);
+    const inner = s.slice(openIdx + 2, closeIdx - 2);
+    out += renderMacro(inner, full, ctx, vars, depth);
+    i = closeIdx;
+  }
+  return out;
+}
 
 export function applyMacros(text: string, ctx: MacroCtx): { text: string; vars: Record<string, string> } {
   const vars: Record<string, string> = { ...ctx.vars };
 
-  let out = String(text || '').replace(MACRO_RE, (full: string, inner: string) => {
-    if (inner === 'user') return ctx.user;
-    if (inner === 'char') return ctx.char;
-    if (inner === 'trim') return full; // 占位不动,第二趟专门处理(需要保留原始位置去剥周围空白)
-    if (inner.startsWith('setvar::')) {
-      const parts = inner.split('::');
-      const name = parts[1] ?? '';
-      const value = parts.slice(2).join('::'); // value 本身可能含 '::' 字面量,拼回去别拆丢
-      if (name) vars[name] = value;
-      return ''; // setvar 永远渲染成空串
-    }
-    if (inner.startsWith('getvar::')) {
-      const name = inner.slice('getvar::'.length);
-      return vars[name] ?? '';
-    }
-    return full; // 未识别宏:原样保留,不动它
-  });
+  let out = scanMacros(String(text || ''), ctx, vars, 0);
 
   // 第二趟:{{trim}} 剥掉自己位置紧邻的空白/换行(垫底块专用——纯 setvar 的块配 {{trim}} 收尾能整块渲染成空)
   out = out.replace(/\s*\{\{trim\}\}\s*/g, '');
