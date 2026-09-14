@@ -778,7 +778,7 @@ export async function deskImportWorlds(env: DeskEnv, raw: any): Promise<any> {
     return env.OC_DB.prepare(
       `INSERT INTO memories (id, project, category, title, tags, chapter, content, created_at, updated_at,
                              lore_keys, lore_position, is_char, lore_constant, lore_enabled, lore_fields, trigger_mode)
-       VALUES (?, ?, 'world', ?, '[]', NULL, ?, ?, ?, ?, ?, 0, ?, ?, '{}', 'scan')`
+       VALUES (?, ?, 'world', ?, '[]', '', ?, ?, ?, ?, ?, 0, ?, ?, '{}', 'scan')`
     ).bind(id, project, e.name, e.content, now, now,
            JSON.stringify(e.keys), e.position, e.constant ? 1 : 0, e.enabled ? 1 : 0);
   });
@@ -847,7 +847,7 @@ export async function importCharacterCard(env: DeskEnv, card: CharacterCard, pro
     await env.OC_DB.prepare(
       `INSERT INTO memories (id, project, category, title, tags, chapter, content, created_at, updated_at,
                              lore_keys, lore_position, is_char, lore_constant, lore_enabled, lore_fields, trigger_mode)
-       VALUES (?, ?, 'world', ?, '[]', NULL, ?, ?, ?, ?, 'before', 1, 0, 1, ?, 'scan')`
+       VALUES (?, ?, 'world', ?, '[]', '', ?, ?, ?, ?, 'before', 1, 0, 1, ?, 'scan')`
     ).bind(id, project, card.name, card.description, now, now, JSON.stringify([card.name]), safeJsonStringify(fields)).run();
   } catch (err: any) {
     return { success: false, error: err.message, server: true };
@@ -874,7 +874,7 @@ export async function importCharacterCard(env: DeskEnv, card: CharacterCard, pro
         return env.OC_DB.prepare(
           `INSERT INTO memories (id, project, category, title, tags, chapter, content, created_at, updated_at,
                                  lore_keys, lore_position, is_char, lore_constant, lore_enabled, lore_fields, trigger_mode)
-           VALUES (?, ?, 'world', ?, '[]', NULL, ?, ?, ?, ?, ?, 0, ?, ?, '{}', 'scan')`
+           VALUES (?, ?, 'world', ?, '[]', '', ?, ?, ?, ?, ?, 0, ?, ?, '{}', 'scan')`
         ).bind(eid, project, e.name, e.content, now, now,
                JSON.stringify(e.keys), e.position, e.constant ? 1 : 0, e.enabled ? 1 : 0);
       });
